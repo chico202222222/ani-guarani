@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Lançador local: não instala pacotes nem modifica o ambiente do usuário.
+set -euo pipefail
+
+fail() {
+    printf 'Erro: %s\n' "$*" >&2
+    exit 1
+}
+
+# Resolve links simbólicos para permitir instalação em ~/.local/bin.
+script=${BASH_SOURCE[0]}
+while [[ -L "$script" ]]; do
+    base=$(cd -P -- "$(dirname -- "$script")" && pwd)
+    script=$(readlink -- "$script")
+    [[ "$script" = /* ]] || script="$base/$script"
+done
+root=$(cd -P -- "$(dirname -- "$script")" && pwd)
+
+if [[ -n "${ANI_GUARANI_PYTHON:-}" ]]; then
+    python=$ANI_GUARANI_PYTHON
+elif [[ -x "$root/.venv/bin/python" ]]; then
+    python="$root/.venv/bin/python"
+elif [[ -x "$root/venv/bin/python" ]]; then
+    python="$root/venv/bin/python"
+else
+    python=python3
+fi
+
+command -v -- "$python" >/dev/null 2>&1 || fail "Python não encontrado. Instale Python 3.10+ ou defina ANI_GUARANI_PYTHON."
+"$python" -c 'import sys; sys.exit(sys.version_info < (3, 10))' || fail 'É necessário Python 3.10 ou superior.'
+[[ -f "$root/main.py" ]] || fail "main.py não encontrado em $root. Mantenha o lançador junto do projeto."
+exec "$python" "$root/main.py" "$@"

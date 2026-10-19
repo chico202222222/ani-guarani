@@ -1,0 +1,41 @@
+# Python: bytecode e caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Ambientes virtuais locais
+/.venv/
+/venv/
+/env/
+
+# Artefatos de empacotamento e PyInstaller
+/build/
+/dist/
+/*.spec
+*.egg-info/
+
+# Relatórios locais de testes e cobertura
+.coverage
+.coverage.*
+/htmlcov/
+/coverage.xml
+
+# Configuração privada (preserva exemplos versionáveis)
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# Logs de execução e drivers
+*.log
+/log.txt
+/geckodriver.log
+
+# Arquivos temporários de editores e sistema operacional
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db

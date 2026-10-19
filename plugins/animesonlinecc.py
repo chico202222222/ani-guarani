@@ -1,97 +1,74 @@
-import requests
-import subprocess
+from urllib.parse import quote, urljoin
+
 from bs4 import BeautifulSoup
-from repository import rep
-from loader import PluginInterface
-from selenium import webdriver
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.wait import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from multiprocessing.pool import ThreadPool
-from os import cpu_count
-from .utils import is_firefox_installed_as_snap
+
+from loader import PluginInterface
+from repository import rep
+from .utils import fetch_page, find_player_src
 
 
 class AnimesOnlineCC(PluginInterface):
     languages = ["pt-br"]
     name = "animesonlinecc"
-    
+
     @staticmethod
     def search_anime(query):
-        url = "https://animesonlinecc.to/search/" + "+".join(query.split())
-        html_content = requests.get(url)
-        soup = BeautifulSoup(html_content.text, 'html.parser')
-        divs = soup.find_all('div', class_='data')
-        titles_urls = [div.h3.a["href"] for div in divs]
-        titles = [div.h3.a.get_text() for div in divs]
-        for title, url in zip(titles, titles_urls):
-            rep.add_anime(title, url, AnimesOnlineCC.name)
+        url = "https://animesonlinecc.to/search/" + "+".join(
+            quote(word, safe="") for word in query.split()
+        )
+        html, base_url = fetch_page(url)
+        soup = BeautifulSoup(html, "html.parser")
+        entries = []
+        for div in soup.find_all("div", class_="data"):
+            anchor = div.select_one("h3 a[href]")
+            if anchor is None:
+                continue
+            title = anchor.get_text(strip=True)
+            href = anchor["href"].strip()
+            if title and href:
+                anime_url = urljoin(base_url, href)
+                entries.append((title, anime_url))
+                rep.add_anime(title, anime_url, AnimesOnlineCC.name)
 
-        def parse_seasons(title, url):
-                html = requests.get(url)
-                soup = BeautifulSoup(html.text, 'html.parser')
-                num_seasons = len([div for div in soup.find_all('div', class_='se-c')])
-                if num_seasons > 1:
-                    for n in range(2, num_seasons + 1):
-                        rep.add_anime(title + " Season " + str(n), url, AnimesOnlineCC.name, n)
-        
-        with ThreadPool(cpu_count()) as pool:
-            for title, url in zip(titles, titles_urls):
-                pool.apply(parse_seasons, args=(title, url))
-            
+        # The former ThreadPool.apply calls also processed seasons sequentially.
+        for title, anime_url in entries:
+            html, _ = fetch_page(anime_url)
+            soup = BeautifulSoup(html, "html.parser")
+            num_seasons = len(soup.find_all("div", class_="se-c"))
+            for n in range(2, num_seasons + 1):
+                rep.add_anime(title + " Season " + str(n), anime_url, AnimesOnlineCC.name, n)
+
     @staticmethod
     def search_episodes(anime, url, season):
-        html_episodes_page = requests.get(url)
-        soup = BeautifulSoup(html_episodes_page.text, "html.parser")
-        seasons = [ season for season in soup.find_all('ul', class_="episodios") ]
-        season = seasons[ season - 1 if season is not None else 0]
-        urls, titles = [], []
-        for div in season.find_all('div', class_="episodiotitle"):
-            urls.append(div.a["href"])
-            titles.append(div.a.get_text()) 
+        html, base_url = fetch_page(url)
+        soup = BeautifulSoup(html, "html.parser")
+        seasons = soup.find_all("ul", class_="episodios")
+        season_number = 1 if season is None else season
+        if type(season_number) is not int or not 1 <= season_number <= len(seasons):
+            raise ValueError(
+                f"Invalid season {season_number!r} for {anime!r} at {url}: "
+                f"found {len(seasons)} seasons"
+            )
+        titles, urls = [], []
+        for div in seasons[season_number - 1].find_all("div", class_="episodiotitle"):
+            anchor = div.find("a", href=True)
+            if anchor is None:
+                continue
+            title = anchor.get_text(strip=True)
+            href = anchor["href"].strip()
+            if title and href:
+                titles.append(title)
+                urls.append(urljoin(base_url, href))
         rep.add_episode_list(anime, titles, urls, AnimesOnlineCC.name)
-    
+
     @staticmethod
     def search_player_src(url_episode, container, event):
-        options = webdriver.FirefoxOptions()
-        options.add_argument("--headless")
-
-        try:
-            if is_firefox_installed_as_snap():
-                service = webdriver.FirefoxService(executable_path="/snap/bin/geckodriver")
-                driver = webdriver.Firefox(options=options, service = service)
-            else:
-                driver = webdriver.Firefox(options=options)
-        except:
-            raise Exception("Firefox not installed.")
-
-        driver.get(url_episode)
-
-        try:
-            class_ = "/html/body/div[1]/div[2]/div[2]/div[2]/div[1]/div[1]/div[1]/iframe"
-            params = (By.XPATH, class_)
-            element = WebDriverWait(driver, 7).until(
-                EC.visibility_of_all_elements_located(params)
-            )
-        except:
-            driver.quit()
-            raise Exception("nor iframe nor video tags were found in animesonlinecc.")
-
-        product = driver.find_element(params[0], params[1])
-        link = product.get_property("src") 
-        driver.quit()
-
-        if not event.is_set():
-            container.append(link)
-            event.set()
+        find_player_src(url_episode, container, event, AnimesOnlineCC.name, (
+            (By.XPATH, "/html/body/div[1]/div[2]/div[2]/div[2]/div[1]/div[1]/div[1]/iframe"),
+        ))
 
 
 def load(languages_dict):
-    can_load = False
-    for language in AnimesOnlineCC.languages:
-        if language in languages_dict:
-            can_load = True
-            break
-    if not can_load:
-        return
-    rep.register(AnimesOnlineCC)
+    if any(language in languages_dict for language in AnimesOnlineCC.languages):
+        rep.register(AnimesOnlineCC)

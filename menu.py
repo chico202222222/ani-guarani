@@ -1,66 +1,78 @@
-import curses
-from sys import exit
+"""Menu com teclado e alternativa numerada para terminais simples."""
+import os
+import sys
+
+try:
+    import curses
+except ImportError:
+    curses = None
 
 
-def __menu(stdscr, menu, msg, result) -> str:
-    menu.append("Sair")
-    stdscr.clear()
-    curses.curs_set(0)  
+class Cancelled(Exception):
+    """Saída solicitada pelo usuário."""
 
-    screen_height, screen_width = stdscr.getmaxyx()
-    display_height = screen_height - 2  # Leave space for padding at the top and bottom
 
-    curses.start_color()
-
-    curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_YELLOW)  # Black text on yellow background
-    curses.init_pair(2, curses.COLOR_YELLOW, curses.COLOR_BLACK)
-
-    current_option = 0
-    start_index = 0  # Index of the first displayed option
-
+def _plain(options, msg):
+    print(msg)
+    for index, option in enumerate(options, 1):
+        print(f"  {index}. {option}")
+    print("  0. Sair")
     while True:
-        stdscr.clear()
-        
-        stdscr.attron(curses.color_pair(2))
-        stdscr.addstr(1, screen_width//5 - len(msg)//2, msg.upper())
-        stdscr.attroff(curses.color_pair(2))
-    
-        end_index = start_index + display_height
-        visible_options = menu[start_index:min(len(menu), end_index)] 
-        # Display menu
-        for idx, row in enumerate(visible_options):
-            if start_index + idx == current_option:
-                stdscr.attron(curses.color_pair(1))  # Highlight current option
-                stdscr.addstr(idx + 2, 2, row)
-                stdscr.attroff(curses.color_pair(1))
-            else:
-                stdscr.addstr(idx + 2, 2, row)
-        key = stdscr.getch()
+        value = input("Escolha um número: ").strip()
+        if value.lower() in {"0", "q", "sair"}:
+            raise Cancelled
+        if value.isdecimal() and 1 <= int(value) <= len(options):
+            return options[int(value) - 1]
+        print("Opção inválida. Digite um dos números acima.")
 
-        # Arrow key navigation
-        if key == curses.KEY_UP:
-            current_option = (current_option - 1) % len(menu)
-            if current_option < start_index:
-                start_index = current_option
-            elif current_option == len(menu) - 1 and display_height < len(menu):
-                    start_index = current_option - display_height + 1
 
-        elif key == curses.KEY_DOWN:
-            current_option = (current_option + 1) % len(menu)
-            if current_option >= end_index or current_option == 0:
-                start_index = current_option
-        elif key == curses.KEY_ENTER or key in [10, 13]:
-            result.append(menu[current_option])
-            break
+def _screen(screen, options, msg):
+    try:
+        curses.curs_set(0)
+    except curses.error:
+        pass
+    screen.keypad(True)
+    current = 0
+    labels = [*options, "Sair"]
+    while True:
+        screen.erase()
+        height, width = screen.getmaxyx()
+        if height < 4 or width < 12:
+            raise curses.error("Terminal pequeno")
+        visible = height - 2
+        start = max(0, current - visible + 1)
 
-def menu(opts: list[str], msg="") -> str:
-    selected = [] 
-    curses.wrapper(lambda stdscr: __menu(stdscr, opts, msg, result=selected))
-    if selected[0] == "Sair":
-        exit()
-    opts.pop()
-    return selected[0]
+        def draw(row, text, attr=0):
+            try:
+                screen.addnstr(row, 0, str(text), width - 1, attr)
+            except curses.error:
+                pass  # Caracteres largos podem ocupar mais de uma coluna.
 
-if __name__ == "__main__":
-   main() 
+        draw(0, msg, curses.A_BOLD)
+        for row, index in enumerate(range(start, min(len(labels), start + visible)), 1):
+            draw(row, labels[index], curses.A_REVERSE if index == current else 0)
+        draw(height - 1, "↑/↓ ou j/k • Enter • q: sair")
+        screen.refresh()
+        key = screen.getch()
+        if key in (ord("q"), 27):
+            raise Cancelled
+        if key in (curses.KEY_UP, ord("k")):
+            current = (current - 1) % len(labels)
+        elif key in (curses.KEY_DOWN, ord("j")):
+            current = (current + 1) % len(labels)
+        elif key in (10, 13, curses.KEY_ENTER):
+            if current == len(options):
+                raise Cancelled
+            return options[current]
 
+
+def menu(opts, msg="Escolha uma opção:"):
+    options = list(opts)
+    if not options:
+        raise ValueError("Nenhum resultado disponível. Tente outra busca ou fonte.")
+    if curses and sys.stdin.isatty() and sys.stdout.isatty() and os.environ.get("TERM", "dumb") != "dumb":
+        try:
+            return curses.wrapper(_screen, options, msg)
+        except curses.error:
+            pass
+    return _plain(options, msg)

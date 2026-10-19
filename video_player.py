@@ -1,16 +1,13 @@
+import shutil
 import subprocess
-from sys import exit
+from urllib.parse import urlsplit
 
 
 def play_video(url: str, debug=False) -> None:
-    try:
-        if not debug:
-            process = subprocess.run(["mpv", url, "--fullscreen", "--cursor-autohide-fs-only", "--log-file=log.txt"]
-                                    , stdout=subprocess.PIPE
-                                     , stdin=subprocess.PIPE)
-    except FileNotFoundError:
-        # Handle the case where mpv is not installed or not in PATH
-        raise EnvironmentError("Error: 'mpv' is not installed or not found in the system PATH.")
-    except Exception as e:
-        raise e
-    
+    if not isinstance(url, str) or urlsplit(url).scheme not in {"http", "https"} or not urlsplit(url).netloc:
+        raise ValueError("A fonte retornou uma URL de vídeo inválida (esperado HTTP/HTTPS).")
+    if not shutil.which("mpv"):
+        raise RuntimeError("mpv não encontrado no PATH. Instale-o para reproduzir vídeos.")
+    result = subprocess.run(["mpv", "--fullscreen", "--cursor-autohide-fs-only", "--", url], check=False)
+    if result.returncode:
+        raise RuntimeError(f"mpv terminou com código {result.returncode}. A URL pode não ser reproduzível.")
