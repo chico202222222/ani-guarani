@@ -164,3 +164,37 @@ class CliTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PlayerFallbackTests(unittest.TestCase):
+    def test_priority_order_and_fallback(self):
+        from repository import Repository
+
+        rep = Repository()
+
+        def make(name, priority, url):
+            class Plugin:
+                def search_player_src(self, _url, container, event):
+                    if url is None:
+                        raise RuntimeError("morto")
+                    container.append(url)
+            plugin = Plugin()
+            plugin.name, plugin.priority = name, priority
+            rep.register(plugin)
+
+        make("lento", 90, "https://dead.example/a")
+        make("bom", 0, "https://good.example/a")
+        make("quebrado", 10, None)
+        for source in ("lento", "bom", "quebrado"):
+            rep.add_episode_list("A", ["1"], ["https://x/" + source], source)
+        self.assertEqual(list(rep.search_players("A", 1)),
+                         ["https://good.example/a", "https://dead.example/a"])
+
+    def test_results_prefer_titles_containing_query(self):
+        from repository import Repository
+
+        rep = Repository()
+        rep.query = "one piece"
+        rep.add_anime("One Piece [X]", "u", "s")
+        rep.add_anime("Angel's 3Piece! [X]", "u2", "s")
+        self.assertEqual(rep.get_anime_titles(), ["One Piece [X]"])

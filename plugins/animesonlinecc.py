@@ -11,6 +11,7 @@ from .utils import fetch_page, find_player_src
 class AnimesOnlineCC(PluginInterface):
     languages = ["pt-br"]
     name = "animesonlinecc"
+    priority = 10
 
     @staticmethod
     def search_anime(query):

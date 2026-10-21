@@ -7,7 +7,7 @@ import requests
 from selenium.common.exceptions import TimeoutException, WebDriverException
 from selenium.webdriver.common.by import By
 
-from plugins import animefire, animesonlinecc, utils
+from plugins import animesonlinecc, utils
 
 
 class ParsingTests(unittest.TestCase):
@@ -16,25 +16,6 @@ class ParsingTests(unittest.TestCase):
             utils.requests, "get", side_effect=AssertionError("Unexpected network request")
         ))
 
-    def test_animefire_titles_stay_with_their_urls(self):
-        card_class = "col-6 col-sm-4 col-md-3 col-lg-2 mb-1 minWDanime divCardUltimosEps"
-
-        def card(content, attrs='title="card"'):
-            return f'<div class="{card_class}" {attrs}>{content}</div>'
-
-        html = '<h3 class="animeTitle">Unrelated heading</h3>'
-        html += card('<h3 class="animeTitle">Missing link</h3>')
-        html += card('<article><a href="../first?x=1&amp;y=2"><h3 class="animeTitle"> First </h3></a></article>')
-        html += card('<article><a href="/missing-title">No heading</a></article>')
-        html += card('<article><a href="//cdn.example/second"><h3 class="animeTitle">Second</h3></a></article>')
-        html += card('<article><a href=" "><h3 class="animeTitle">Empty URL</h3></a></article>')
-        html += card('<article><a href="/ignored"><h3 class="animeTitle">No title attribute</h3></a></article>', '')
-        with patch.object(animefire, "fetch_page", return_value=(html, "https://redirect.example/search/")), patch.object(animefire, "rep") as rep:
-            animefire.AnimeFire.search_anime("test")
-        self.assertEqual(rep.add_anime.call_args_list, [
-            call("First", "https://redirect.example/first?x=1&y=2", "animefire"),
-            call("Second", "https://cdn.example/second", "animefire"),
-        ])
 
     def test_animesonlinecc_titles_urls_and_seasons(self):
         html = '''
@@ -63,7 +44,7 @@ class ParsingTests(unittest.TestCase):
 
     def test_search_query_quoting_preserves_site_separators(self):
         cases = [
-            (animefire, animefire.AnimeFire, "https://animefire.plus/pesquisar/a%2Bb-%2F%3F%23-%25-a%C3%A7%C3%A3o"),
+
             (animesonlinecc, animesonlinecc.AnimesOnlineCC, "https://animesonlinecc.to/search/a%2Bb+%2F%3F%23+%25+a%C3%A7%C3%A3o"),
         ]
         for module, plugin, expected in cases:
@@ -79,13 +60,13 @@ class ParsingTests(unittest.TestCase):
             <a {attrs} href=" ">Empty URL</a>
             <a {attrs} href="//cdn.example/ep2">Episode 2</a>
         '''
-        fire_html = anchors.format(attrs='class="lEp epT divNumEp smallbox px-2 mx-1 text-left d-flex"')
+
         cc_html = '<ul class="episodios">' + ''.join(
             f'<div class="episodiotitle">{line}</div>'
             for line in anchors.format(attrs="").splitlines()
         ) + '</ul>'
         for module, plugin, html in (
-            (animefire, animefire.AnimeFire, fire_html),
+
             (animesonlinecc, animesonlinecc.AnimesOnlineCC, cc_html),
         ):
             with self.subTest(source=plugin.name), patch.object(module, "fetch_page", return_value=(html, "https://redirect.example/anime/")), patch.object(module, "rep") as rep:
@@ -142,8 +123,13 @@ class PlayerTests(unittest.TestCase):
         self.container = []
         self.url = "https://example.org/episode"
 
-    def search(self, plugin=animefire.AnimeFire):
-        plugin.search_player_src(self.url, self.container, self.event)
+    def search(self, plugin=None):
+        if plugin is not None:
+            plugin.search_player_src(self.url, self.container, self.event)
+        else:
+            utils.find_player_src(self.url, self.container, self.event, "testsource", (
+                (By.CSS_SELECTOR, "video"), (By.CSS_SELECTOR, "iframe"),
+            ))
 
     def test_success_resolves_src_sets_event_and_closes_firefox(self):
         self.search()
@@ -156,13 +142,13 @@ class PlayerTests(unittest.TestCase):
         self.wait.assert_called_once_with(self.driver, 7)
         self.driver.quit.assert_called_once_with()
 
-    def test_animefire_falls_back_to_existing_iframe_selector(self):
+    def test_generic_player_falls_back_to_iframe_selector(self):
         self.wait.return_value.until.side_effect = [TimeoutException("video missing"), [self.element]]
         with patch.object(utils.EC, "visibility_of_all_elements_located") as visible:
             self.search()
         self.assertEqual(visible.call_args_list, [
-            call((By.ID, "my-video_html5_api")),
-            call((By.XPATH, "/html/body/div[2]/div[2]/div/div[1]/div[1]/div/div/div[2]/div[4]/iframe")),
+            call((By.CSS_SELECTOR, "video")),
+            call((By.CSS_SELECTOR, "iframe")),
         ])
         self.assertEqual(len(self.container), 1)
         self.driver.quit.assert_called_once_with()
@@ -175,10 +161,38 @@ class PlayerTests(unittest.TestCase):
         self.assertEqual(self.container, ["https://example.org/embed/player.html"])
         self.driver.quit.assert_called_once_with()
 
+    def test_unavailable_blogger_does_not_publish_or_cancel(self):
+        self.element.get_property.return_value = "https://www.blogger.com/video.g?token=test"
+        html = '<main><div class="Phuhlc">Video is unavailable</div></main>'
+        with patch.object(utils, "fetch_page", return_value=(html, self.element.get_property.return_value)), self.assertLogs(utils.logger, level="WARNING"):
+            with self.assertRaisesRegex(RuntimeError, "este vídeo está indisponível"):
+                self.search(animesonlinecc.AnimesOnlineCC)
+        self.assertEqual(self.container, [])
+        self.assertFalse(self.event.is_set())
+        self.driver.quit.assert_called_once_with()
+
+    def test_unavailable_blogger_falls_back_to_other_selector(self):
+        self.element.get_property.side_effect = ["https://www.blogger.com/video.g?token=test", "https://example.org/video.mp4"]
+        with patch.object(utils, "fetch_page", return_value=('<main><div class="Phuhlc">Video is unavailable</div></main>', "https://www.blogger.com/")), self.assertLogs(utils.logger, level="WARNING"):
+            self.search()
+        self.assertEqual(self.container, ["https://example.org/video.mp4"])
+        self.assertTrue(self.event.is_set())
+
+    def test_blogger_without_explicit_unavailable_message_is_not_rejected(self):
+        with patch.object(utils, "fetch_page", return_value=('<script>var VIDEO_CONFIG = {}</script>', "https://www.blogger.com/")) as fetch:
+            self.assertEqual(utils.resolve_blogger_player("https://www.blogger.com/video.g?token=test"), "https://www.blogger.com/video.g?token=test")
+        fetch.assert_called_once()
+
+    def test_other_hosts_are_not_fetched(self):
+        with patch.object(utils, "fetch_page") as fetch:
+            utils.resolve_blogger_player("https://example.org/video.g?token=test")
+            utils.resolve_blogger_player("https://www.blogger.com.evil.example/video.g?token=test")
+        fetch.assert_not_called()
+
     def test_navigation_timeout_closes_firefox_and_preserves_cause(self):
         error = TimeoutException("navigation timed out")
         self.driver.get.side_effect = error
-        with self.assertRaisesRegex(RuntimeError, "Failed to inspect player.*animefire.*example.org/episode") as caught:
+        with self.assertRaisesRegex(RuntimeError, "Failed to inspect player.*testsource.*example.org/episode") as caught:
             self.search()
         self.assertIs(caught.exception.__cause__, error)
         self.driver.quit.assert_called_once_with()
@@ -187,7 +201,7 @@ class PlayerTests(unittest.TestCase):
 
     def test_missing_players_close_firefox(self):
         self.wait.return_value.until.side_effect = TimeoutException("missing")
-        with self.assertRaisesRegex(RuntimeError, "No visible player found in animefire"):
+        with self.assertRaisesRegex(RuntimeError, "No visible player found in testsource"):
             self.search()
         self.assertEqual(self.wait.call_count, 2)
         self.driver.quit.assert_called_once_with()

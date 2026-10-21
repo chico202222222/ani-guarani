@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 cd -- "$root"
 if [[ -n "${ANI_GUARANI_PYTHON:-}" ]]; then
     python=$ANI_GUARANI_PYTHON
@@ -19,5 +19,8 @@ command -v -- "$python" >/dev/null 2>&1 || { printf 'Erro: Python não encontrad
 }
 printf 'Gerando executável ani-guarani…\n'
 "$python" -m PyInstaller --noconfirm --clean --onefile --name ani-guarani \
-    --collect-submodules plugins --add-data 'plugins:plugins' main.py
+    --collect-submodules plugins --collect-submodules selenium.webdriver \
+    --add-data 'plugins:plugins' \
+    --add-data 'LICENSE:.' --add-data 'LICENSES:LICENSES' \
+    --add-data 'THIRD_PARTY_NOTICES.md:.' main.py
 printf 'Build concluído: %s/dist/ani-guarani\nO PATH e o ~/.bashrc não foram alterados.\n' "$root"

@@ -17,10 +17,11 @@ class ResumeTests(unittest.TestCase):
         stack.enter_context(patch.object(main.loader, "load_plugins", side_effect=lambda *args: repository.sources.update({"animefire": object()})))
         stack.enter_context(patch.object(main, "read_history", return_value={"Anime": [sources, index]}))
         stack.enter_context(patch.object(main, "menu", side_effect=menu))
-        player = stack.enter_context(patch.object(repository, "search_player", return_value="https://example.org/video"))
+        player = stack.enter_context(patch.object(repository, "search_players", side_effect=lambda *a: iter(["https://example.org/video"])))
         play = stack.enter_context(patch.object(main, "play_video"))
         save = stack.enter_context(patch.object(main, "save_history"))
         stack.enter_context(patch.object(main, "status"))
+        stack.enter_context(patch.object(main, "in_watchlist", return_value=False))
         args = SimpleNamespace(source=["animefire"], continue_watching=True, debug=False)
         return args, player, play, save
 
@@ -31,11 +32,15 @@ class ResumeTests(unittest.TestCase):
 
         def choose(options, message):
             calls.append(options)
-            return options[0]
+            if len(calls) == 1:
+                return options[0]
+            raise Cancelled
 
         args, player, play, save = self.run_resume(sources, 0, choose, repository)
-        main.main(args)
-        self.assertEqual(len(calls), 1)  # Sem menu Próximo no único episódio habilitado.
+        with self.assertRaises(Cancelled):
+            main.main(args)
+        # Sem Próximo/Anterior no único episódio habilitado: só a lista para assistir.
+        self.assertEqual(calls[1:], [[main.ADD_LABEL]])
         self.assertEqual(repository.anime_episodes_urls["Anime"], sources[:1])
         player.assert_called_once_with("Anime", 1)
         play.assert_called_once()
@@ -74,7 +79,8 @@ class ResumeTests(unittest.TestCase):
         args, player, play, save = self.run_resume(sources, 0, choose, Repository())
         with self.assertRaises(Cancelled):
             main.main(args)
-        self.assertEqual(calls[1:], [["Próximo"], ["Anterior"], ["Próximo"]])
+        add = main.ADD_LABEL
+        self.assertEqual(calls[1:], [["Próximo", add], ["Anterior", add], ["Próximo", add]])
         self.assertEqual([call.args[1] for call in player.call_args_list], [1, 2, 1])
 
     def test_manga_flags_are_rejected(self):

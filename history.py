@@ -14,6 +14,34 @@ def history_path():
     return root / "ani-tupi" / "history.json"
 
 
+def validate_sources(sources):
+    """Valida a estrutura [[urls, fonte], ...] compartilhada por histórico e lista."""
+    if not isinstance(sources, list) or not sources:
+        raise ValueError("fontes inválidas")
+    for source in sources:
+        if not isinstance(source, (list, tuple)) or len(source) != 2:
+            raise ValueError("fonte inválida")
+        urls, name = source
+        if not isinstance(urls, list) or not urls or not all(isinstance(url, str) for url in urls) or not isinstance(name, str):
+            raise ValueError("URLs inválidas")
+
+
+def write_json_atomic(path, data):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as stream:
+            temporary = Path(stream.name)
+            json.dump(data, stream, ensure_ascii=False, indent=2)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def read_history(path=None):
     path = Path(path) if path is not None else history_path()
     if not path.exists():
@@ -28,12 +56,7 @@ def read_history(path=None):
             sources, index = entry
             if not isinstance(sources, list) or not sources or type(index) is not int or index < 0:
                 raise ValueError("episódio inválido")
-            for source in sources:
-                if not isinstance(source, (list, tuple)) or len(source) != 2:
-                    raise ValueError("fonte inválida")
-                urls, name = source
-                if not isinstance(urls, list) or not urls or not all(isinstance(url, str) for url in urls) or not isinstance(name, str):
-                    raise ValueError("URLs inválidas")
+            validate_sources(sources)
             if index >= max(len(urls) for urls, _ in sources):
                 raise ValueError("episódio fora da lista")
         return data
@@ -45,15 +68,4 @@ def save_history(anime, episode, sources, path=None):
     path = Path(path) if path is not None else history_path()
     data = read_history(path)
     data[anime] = [sources, episode]
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = None
-    try:
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as stream:
-            temporary = Path(stream.name)
-            json.dump(data, stream, ensure_ascii=False, indent=2)
-            stream.flush()
-            os.fsync(stream.fileno())
-        temporary.replace(path)
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
+    write_json_atomic(path, data)

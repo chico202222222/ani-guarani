@@ -1,0 +1,26 @@
+# Uso: docker compose run --rm ani-guarani -q "Naruto"
+# Requer um servidor X11 (ou XWayland) e PulseAudio/PipeWire-Pulse no host.
+# Antes, libere o acesso ao X: xhost +local:docker   (e revogue depois: xhost -local:docker)
+services:
+  ani-guarani:
+    build:
+      context: .
+      args:
+        UID: ${UID:-1000}
+        GID: ${GID:-1000}
+    image: ani-guarani
+    stdin_open: true
+    tty: true
+    environment:
+      DISPLAY: ${DISPLAY:-:0}
+      PULSE_SERVER: unix:/run/user/pulse/native
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:ro
+      - ${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native:/run/user/pulse/native
+      - ani-guarani-data:/data
+    devices:
+      - /dev/dri:/dev/dri   # aceleração de vídeo; remova se não existir no host
+    shm_size: 1gb           # o Firefox headless trava com /dev/shm pequeno
+
+volumes:
+  ani-guarani-data:

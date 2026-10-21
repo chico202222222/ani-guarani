@@ -1,4 +1,3 @@
-add watch lists
 study pytermgui
 study python-mpv
 gemini or llama for recommendation system
