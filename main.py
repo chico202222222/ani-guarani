@@ -7,7 +7,7 @@ import sys
 import loader
 from history import read_history, save_history
 from menu import Cancelled, menu
-from repository import rep
+from repository import AUDIOS, rep
 from video_player import play_video
 from watchlist import add_to_watchlist, in_watchlist, read_watchlist, remove_from_watchlist
 
@@ -68,8 +68,22 @@ def toggle_watchlist(anime, sources):
         logging.warning("Não foi possível atualizar a lista para assistir: %s", exc)
 
 
+def choose_audio(requested):
+    """Aplica --audio ou pergunta legendado/dublado quando a busca tem os dois."""
+    available = rep.available_audios()
+    if requested in AUDIOS:
+        if requested not in available:
+            raise RuntimeError(f"Nenhum resultado {requested} para esta busca. Tente --audio todos.")
+        return requested
+    if requested == "todos" or len(available) < 2:
+        return None
+    labels = {"Legendado": "legendado", "Dublado": "dublado", "Todos": None}
+    return labels[menu(list(labels), "Áudio:")]
+
+
 def main(args):
     rep.sources.clear()
+    rep.audio = None
     loader.load_plugins({"pt-br"}, args.source)
     if not rep.sources:
         raise RuntimeError("Nenhuma fonte carregada. Instale requirements.txt e confira os avisos acima.")
@@ -94,7 +108,8 @@ def main(args):
             raise ValueError("Informe um termo de busca, por exemplo: ani-guarani -q Naruto.")
         status("Buscando animes nas fontes disponíveis…")
         rep.search_anime(query)
-        selected_anime = menu(rep.get_anime_titles(), "Escolha o anime:")
+        rep.audio = choose_audio(getattr(args, "audio", None))
+        selected_anime = menu(rep.get_anime_titles(rep.audio), "Escolha o anime:")
         status("Carregando episódios…")
         rep.search_episodes(selected_anime)
         episodes = rep.get_episode_list(selected_anime)
@@ -158,7 +173,8 @@ def cli(argv=None):
     parser.add_argument("--continue-watching", "--continue_watching", "-c", action="store_true", help="retomar o último episódio assistido")
     parser.add_argument("--watchlist", "-l", action="store_true", help="abrir a lista para assistir")
     parser.add_argument("--add-watchlist", "-a", action="store_true", help="com -q: salvar o anime escolhido na lista para assistir, sem reproduzir")
-    parser.add_argument("--source", action="append", choices=["animefire", "animesonlinecc", "animesonlinecloud"], help="limitar fonte (pode repetir)")
+    parser.add_argument("--audio", choices=[*AUDIOS, "todos"], help="mostrar só animes legendados ou dublados (sem a opção, pergunta quando houver os dois)")
+    parser.add_argument("--source", action="append", choices=["animefire", "animesdigital", "animesonlinecc", "animesonlinecloud", "anitube"], help="limitar fonte (pode repetir)")
     args = parser.parse_args(argv)
     if args.query is not None and args.continue_watching:
         parser.error("--query não pode ser combinado com --continue-watching")

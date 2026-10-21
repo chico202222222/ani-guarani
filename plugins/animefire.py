@@ -16,7 +16,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 import requests
 
 from loader import PluginInterface
-from repository import rep
+from repository import AUDIOS, rep
 
 BASE_URL = "https://animefire.one"
 API_URL = "https://api.animefire.one"
@@ -49,6 +49,13 @@ def _title(anime):
     title = title or next((value.strip() for value in titles.values() if value.strip()), anime_id)
     # O Repository mescla títulos iguais, mesmo de fontes ou IDs diferentes.
     return anime_id, f"{title} [AnimeFire: {anime_id}]"
+
+
+def _audio(anime):
+    """Áudios que a busca anuncia (ex.: "Dublado & Legendado"); None se não informar."""
+    text = anime.get("audio")
+    found = [audio for audio in AUDIOS if isinstance(text, str) and audio in text.casefold()]
+    return found or None
 
 
 def _request(path, **params):
@@ -117,6 +124,7 @@ class AnimeFire(PluginInterface):
     def search_anime(query):
         seen = set()
         results = []
+        audios = {}
         for page in range(1, MAX_SEARCH_PAGES + 1):
             payload = _request("/animes/pesquisar", q=query.strip(), page=page)
             data, meta = payload["data"], payload.get("meta")
@@ -126,6 +134,7 @@ class AnimeFire(PluginInterface):
             _require(type(current) is int and type(last) is int
                      and current == page and last >= current, "paginação sem progresso")
             entries = [_title(anime) for anime in data]
+            audios.update({anime["id"]: _audio(anime) for anime in data})
             new_entries = [(anime_id, title) for anime_id, title in entries if anime_id not in seen]
             _require(not data or new_entries, "paginação repetida sem progresso")
             for anime_id, title in new_entries:
@@ -138,7 +147,8 @@ class AnimeFire(PluginInterface):
         else:
             raise RuntimeError("AnimeFire: paginação excedeu o limite de segurança.")
         for anime_id, title in results:
-            rep.add_anime(title, f"{BASE_URL}/anime/{anime_id}", AnimeFire.name)
+            rep.add_anime(title, f"{BASE_URL}/anime/{anime_id}", AnimeFire.name,
+                          audio=audios.get(anime_id))
 
     @staticmethod
     def search_episodes(anime, url, params):
@@ -198,9 +208,13 @@ class AnimeFire(PluginInterface):
             _require(audio in ("legendado", "dublado"), "stream.audio")
             url = _stream_url(stream.get("url"))
             if url:
-                candidates.append((mtl, audio != "legendado", url))
+                candidates.append((mtl, audio != "legendado", url, audio))
         if not candidates:
             raise RuntimeError("AnimeFire: nenhum stream HTTP(S) disponível; episódios/streams offline.")
+        if rep.audio:
+            candidates = [candidate for candidate in candidates if candidate[3] == rep.audio]
+            if not candidates:
+                raise RuntimeError(f"AnimeFire: este episódio não tem stream {rep.audio}.")
         # Prioriza tradução original; entre streams não MTL, prefere legendado.
         url = min(candidates, key=lambda candidate: candidate[:2])[2]
         if not event.is_set():

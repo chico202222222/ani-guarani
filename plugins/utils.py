@@ -183,3 +183,73 @@ def find_player_src(url, container, event, source, locators):
             except Exception as exc:
                 # Cleanup must not hide the original lookup error or its result.
                 logger.warning("Failed to close Firefox for %s at %s: %s", source, url, exc)
+
+
+def media_alive(url, headers=None):
+    """Sonda o vídeo antes de entregá-lo ao player.
+
+    Devolve False só diante de um "não existe/negado" definitivo (404, 410, 403);
+    erros de rede e outros status devolvem None (indeterminado) para o chamador
+    decidir, já que o mpv lida melhor com redirecionamentos e limites do servidor.
+    """
+    try:
+        with requests.get(url, headers={"Range": "bytes=0-0", **(headers or {})},
+                          timeout=(5, 8), stream=True, allow_redirects=False) as response:
+            status = response.status_code
+    except requests.RequestException:
+        return None
+    if status in (403, 404, 410):
+        return False
+    return True if status < 400 else None
+
+
+def anivideo_stream(player_url):
+    """Extrai o m3u8 do player api.anivideo.net (usado por AnimesDigital e AniTube)."""
+    try:
+        parts = urlsplit(player_url)
+    except ValueError:
+        return None
+    if parts.hostname != "api.anivideo.net" or not parts.path.endswith("/videohls.php"):
+        return None
+    for value in parse_qs(parts.query).get("d", []):
+        try:
+            stream = urlsplit(value)
+        except ValueError:
+            continue
+        if stream.scheme in ("http", "https") and stream.hostname:
+            return stream.geturl()
+    return None
+
+
+def find_anivideo_src(url, container, event, source, headers=None):
+    """Player api.anivideo.net da página do episódio -> m3u8 verificado."""
+    if event.is_set():
+        return
+    html, page_url = fetch_page(url, {"User-Agent": BLOGGER_USER_AGENT, **(headers or {})})
+    soup = BeautifulSoup(html, "html.parser")
+    streams = []
+    for frame in soup.select("iframe[src]"):
+        try:
+            stream = anivideo_stream(urljoin(page_url, frame["src"].strip()))
+        except ValueError:
+            continue
+        if stream and stream not in streams:
+            streams.append(stream)
+    if not streams:
+        raise RuntimeError(f"{source}: nenhum player encontrado na página do episódio.")
+    unverified = None
+    for stream in streams:
+        if event.is_set():
+            return
+        alive = media_alive(stream)
+        if alive:
+            container.append(stream)
+            event.set()
+            return
+        if alive is None:
+            unverified = unverified or stream
+    if unverified and not event.is_set():
+        container.append(unverified)
+        event.set()
+        return
+    raise RuntimeError(f"{source}: o vídeo não existe mais no CDN (HTTP 404). Tente outra fonte ou episódio.")

@@ -198,6 +198,21 @@ def _resolve_embed(value, page_url, event):
     return None
 
 
+def _embedded_sources(soup):
+    """URLs de player da página, na ordem em que o site lista os servidores."""
+    nodes = soup.select(".animeq-player__source :is(video[src], source[src], iframe[src])")
+    # Layout antigo do DooPlay: o vídeo fica solto na página.
+    nodes = nodes or soup.select("video[src], video source[src]")
+    return [(node.name == "iframe", node.get("src")) for node in nodes]
+
+
+def _probe_headers(stream):
+    if (urlsplit(stream).hostname or "").endswith(".googlevideo.com"):
+        # URLs do Blogger só valem para o User-Agent que as obteve.
+        return {"User-Agent": utils.BLOGGER_USER_AGENT}
+    return {"Referer": BASE_URL + "/"}
+
+
 class AnimesOnlineCloud(PluginInterface):
     languages: ClassVar[list[str]] = ["pt-br"]
     name = "animesonlinecloud"
@@ -264,6 +279,7 @@ class AnimesOnlineCloud(PluginInterface):
             return
         html, page_url = response
         soup = BeautifulSoup(html, "html.parser")
+        state = {"error": None, "fallback": None}
 
         def publish(stream):
             if stream and not event.is_set():
@@ -272,10 +288,30 @@ class AnimesOnlineCloud(PluginInterface):
                 return True
             return False
 
-        for node in soup.select("video[src], video source[src]"):
-            if publish(_http_url(node.get("src"), page_url)):
+        def accept(stream):
+            """Publica o primeiro servidor vivo; guarda os incertos como reserva."""
+            if not stream or event.is_set():
+                return False
+            alive = utils.media_alive(stream, _probe_headers(stream))
+            if alive is None:
+                state["fallback"] = state["fallback"] or stream
+            elif alive:
+                return publish(stream)
+            return False
+
+        # Cada episódio lista vários servidores (Blogger, mp4, ...); o primeiro
+        # costuma estar fora do ar enquanto outro funciona, então tenta todos.
+        for is_frame, value in _embedded_sources(soup):
+            if event.is_set():
                 return
-        error, seen = None, set()
+            try:
+                # <video> já é mídia; <iframe> é uma página de player a resolver.
+                stream = _resolve_embed(value, page_url, event) if is_frame else _http_url(value, page_url)
+                if accept(stream):
+                    return
+            except RuntimeError as exc:
+                state["error"] = exc
+        seen = set()
         for option in soup.select("ul#playeroptionsul li"):
             if event.is_set():
                 return
@@ -292,16 +328,17 @@ class AnimesOnlineCloud(PluginInterface):
                     return
                 payload, _ = response
                 if not isinstance(payload, dict) or not isinstance(payload.get("embed_url"), str):
-                    error = RuntimeError("AnimesOnlineCloud: JSON sem embed_url válido.")
+                    state["error"] = RuntimeError("AnimesOnlineCloud: JSON sem embed_url válido.")
                     continue
-                stream = _resolve_embed(payload["embed_url"], page_url, event)
-                if publish(stream):
+                if accept(_resolve_embed(payload["embed_url"], page_url, event)):
                     return
             except RuntimeError as exc:
-                error = exc
-        if not event.is_set():
-            raise RuntimeError("AnimesOnlineCloud: nenhum player suportado com mídia HTTP(S)."
-                               + (f" {error}" if error else "")) from error
+                state["error"] = exc
+        if publish(state["fallback"]) or event.is_set():
+            return
+        error = state["error"]
+        raise RuntimeError("AnimesOnlineCloud: nenhum player suportado com mídia HTTP(S)."
+                           + (f" {error}" if error else "")) from error
 
 
 def load(languages_dict):

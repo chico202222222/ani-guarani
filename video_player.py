@@ -13,7 +13,7 @@ from stream_proxy import animefire_stream
 
 
 CLOUD_REFERER = "https://animesonline.cloud/"
-CLOUD_CDNS = {"aniplay.online", "mangas.cloud"}
+CLOUD_CDNS = {"aniplay.online", "mangas.cloud", "animeq.online", "animeflix.blog"}
 
 
 def ensure_media_exists(url, referer):

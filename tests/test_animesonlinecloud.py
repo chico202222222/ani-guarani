@@ -72,6 +72,7 @@ class AnimesOnlineCloudTests(unittest.TestCase):
         self.get = self.enterContext(patch.object(cloud.requests, "get"))
         self.blogger = self.enterContext(patch.object(cloud.utils, "resolve_blogger_player"))
         self.blogger.return_value = GOOGLEVIDEO
+        self.alive = self.enterContext(patch.object(cloud.utils, "media_alive", return_value=True))
         self.event = Event()
         self.container = []
 
@@ -285,6 +286,50 @@ class AnimesOnlineCloudTests(unittest.TestCase):
         AnimesOnlineCloud.search_player_src(episode, self.container, self.event)
         self.assertEqual(self.container, [MEDIA])
         self.assertTrue(self.event.is_set())
+
+    def servers(self, *sources):
+        """Página no layout atual: um .animeq-player__source por servidor."""
+        return "".join(f'<div class="animeq-player__source">{source}</div>' for source in sources)
+
+    def test_dead_mp4_server_falls_through_to_blogger_iframe(self):
+        # Jujutsu Kaisen 1: o mp4 do mangas.cloud responde 404, o Blogger funciona.
+        dead = "https://mangas.cloud/Animes/Letra-J/Jujutsu%20Kaisen/01.mp4"
+        self.get.return_value = response(self.servers(
+            f'<video><source src="{dead}"></video>', f'<iframe src="{BLOGGER}"></iframe>'))
+        self.alive.side_effect = lambda stream, headers: stream != dead
+        AnimesOnlineCloud.search_player_src(EPISODE, self.container, self.event)
+        self.assertEqual(self.container, [GOOGLEVIDEO])
+        self.assertTrue(self.event.is_set())
+
+    def test_servers_are_tried_in_site_order(self):
+        self.get.return_value = response(self.servers(
+            f'<iframe src="{BLOGGER}"></iframe>', f'<video><source src="{MEDIA}"></video>'))
+        AnimesOnlineCloud.search_player_src(EPISODE, self.container, self.event)
+        self.assertEqual(self.container, [GOOGLEVIDEO])
+        self.alive.assert_called_once_with(
+            GOOGLEVIDEO, {"User-Agent": cloud.utils.BLOGGER_USER_AGENT})
+
+    def test_unverifiable_server_is_kept_as_fallback(self):
+        self.get.return_value = response(self.servers(f'<video><source src="{MEDIA}"></video>'))
+        self.alive.return_value = None
+        AnimesOnlineCloud.search_player_src(EPISODE, self.container, self.event)
+        self.assertEqual(self.container, [MEDIA])
+
+    def test_verified_server_beats_unverifiable_earlier_one(self):
+        slow = "https://slow.example/a.mp4"
+        self.get.return_value = response(self.servers(
+            f'<video><source src="{slow}"></video>', f'<video><source src="{MEDIA}"></video>'))
+        self.alive.side_effect = lambda stream, headers: None if stream == slow else True
+        AnimesOnlineCloud.search_player_src(EPISODE, self.container, self.event)
+        self.assertEqual(self.container, [MEDIA])
+
+    def test_all_servers_dead_raises_without_publishing(self):
+        self.get.return_value = response(self.servers(f'<video><source src="{MEDIA}"></video>'))
+        self.alive.return_value = False
+        with self.assertRaisesRegex(RuntimeError, "nenhum player suportado"):
+            AnimesOnlineCloud.search_player_src(EPISODE, self.container, self.event)
+        self.assertEqual(self.container, [])
+        self.assertFalse(self.event.is_set())
 
     def test_direct_sources_skip_invalid_values_and_resolve_relative_urls(self):
         for src, expected in (("//media.example/video.mp4", "https://media.example/video.mp4"),

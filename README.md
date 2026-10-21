@@ -25,7 +25,7 @@ O projeto está em manutenção e refatoração. Algumas funcionalidades depende
 1. Você pesquisa um anime.
 2. Os plugins consultam as fontes disponíveis e reúnem os resultados.
 3. Você escolhe o anime e o episódio no menu.
-4. O AnimeFire consulta sua API JSON; o AnimesOnlineCloud extrai os players do HTML e da API DooPlay; o AnimesOnlineCC usa Firefox/Selenium em modo headless.
+4. O AnimeFire consulta sua API JSON; o AnimesOnlineCloud extrai os servidores do HTML e da API DooPlay e testa um por um; AnimesDigital e AniTube leem o player HLS (`api.anivideo.net`) da página do episódio; o AnimesOnlineCC usa Firefox/Selenium em modo headless.
 5. O endereço encontrado é enviado ao **mpv**. Para o CDN do AnimeFire, um relay HLS temporário em `127.0.0.1` normaliza as playlists e os tipos de conteúdo.
 6. Após o mpv encerrar sem erro, o episódio é registrado no histórico.
 
@@ -38,12 +38,16 @@ O registro indica o último episódio aberto com reprodução encerrada sem erro
 | `animefire` | `animefire.one` / API `api.animefire.one` |
 | `animesonlinecc` | `animesonlinecc.to` |
 | `animesonlinecloud` | `animesonline.cloud` |
+| `animesdigital` | `animesdigital.org` |
+| `anitube` | `www.anitube.zip` |
 
 Estado verificado em **21/10/2026**:
 
 | Fonte | Busca | Reprodução |
 | --- | --- | --- |
-| `animesonlinecloud` | OK | OK para *Naruto Shippuden* e *Jujutsu Kaisen*; alguns títulos (ex.: *Naruto* clássico) apontam para MP4 removidos (HTTP 404) no CDN `mangas.cloud` |
+| `animesdigital` | OK | OK (HLS, 720p H.264/AAC), legendado e dublado; testado em *Jujutsu Kaisen* (T1 completa) e *One Piece* (1180 episódios) |
+| `anitube` | OK | OK (mesmo CDN HLS do `animesdigital`); testado em *Jujutsu Kaisen* e *One Piece* |
+| `animesonlinecloud` | OK | Parcial: cada episódio tem vários servidores (Blogger, MP4, ...) e o plugin usa o primeiro que responde. Há episódios em que todos estão fora do ar (ex.: *Jujutsu Kaisen* ep. 2) |
 | `animesonlinecc` | OK | OK (Blogger, H.264/AAC 360p); exige Firefox |
 | `animefire` | OK | **Indisponível**: o CDN responde 404 para todos os streams (veja abaixo) |
 
@@ -87,7 +91,7 @@ Este projeto **não executa APKs** e não suporta automaticamente todas as exten
 
 ### Ordem das fontes e fallback
 
-As fontes são tentadas em ordem de confiabilidade (`animesonlinecloud` → `animesonlinecc` → `animefire`). Se uma não resolver ou o mpv falhar, a próxima é tentada automaticamente. Resultados de busca que não contêm os termos pesquisados são ocultados quando há correspondências melhores. Filmes/OVAs do AnimesOnlineCloud aparecem como um único item "Filme".
+As fontes são tentadas em ordem de confiabilidade (`animesonlinecloud` → `animesonlinecc` → `animesdigital` → `anitube` → `animefire`). Esse fallback só acontece entre fontes que compartilham o mesmo título; como os resultados levam o nome da fonte (`[AniTube]`, `[AnimesDigital]`), se uma fonte falhar escolha o mesmo anime em outra. Se uma não resolver ou o mpv falhar, a próxima é tentada automaticamente. Resultados de busca que não contêm os termos pesquisados são ocultados quando há correspondências melhores. Filmes/OVAs do AnimesOnlineCloud aparecem como um único item "Filme".
 
 ## Requisitos
 
@@ -226,6 +230,18 @@ Guarde animes para ver depois, separadamente do histórico:
 - A lista guarda as fontes e os episódios encontrados, então abrir um item não exige nova busca. Como no histórico, `--source` restringe só a reprodução; se nenhuma fonte salva estiver habilitada, o programa avisa.
 - `--watchlist` não pode ser combinado com `--query`, `--continue-watching` ou `--add-watchlist`.
 
+### Legendado ou dublado
+
+Quando a busca traz os dois tipos, o programa pergunta `Legendado / Dublado / Todos` antes de listar os animes. Para pular a pergunta:
+
+```bash
+./ani-guarani -q "Jujutsu Kaisen" --audio dublado    # ou: legendado, todos
+```
+
+- `AnimesDigital`, `AniTube` e `AnimesOnlineCloud` publicam legendado e dublado como títulos separados; o tipo vem da etiqueta do site (AniTube) ou do "Dublado" no título. Sem marcação, é legendado.
+- O AnimeFire informa os áudios de cada anime e traz as duas faixas no mesmo episódio; com `--audio`, o stream escolhido segue sua preferência. Se o episódio não tiver essa faixa, a fonte falha em vez de trocar o áudio em silêncio.
+- `--audio` vale para buscas (`-q`); ao retomar pelo histórico (`-c`) ou pela lista (`-l`) vale o anime salvo.
+
 ### Escolher a fonte
 
 ```bash
@@ -323,6 +339,8 @@ stream_proxy.py         Relay HLS local restrito ao CDN do AnimeFire
 plugins/                Integrações com as fontes de animes
   animefire.py          API v3 do AnimeFire
   animesonlinecloud.py  HTML + API DooPlay
+  animesdigital.py      HTML + player HLS api.anivideo.net
+  anitube.py            HTML + player HLS api.anivideo.net
   animesonlinecc.py     Selenium/Firefox
   utils.py              Selenium, Blogger e utilidades comuns
 tests/                  Testes automatizados
