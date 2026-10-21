@@ -1,12 +1,15 @@
 """Interface de linha de comando do ani-guarani."""
 import argparse
+import contextlib
 import logging
 import os
 import sys
 
 import loader
+from banner import banner
 from history import read_history, save_history
 from menu import Cancelled, menu
+from progress import Loading
 from repository import AUDIOS, rep
 from video_player import play_video
 from watchlist import add_to_watchlist, in_watchlist, read_watchlist, remove_from_watchlist
@@ -15,6 +18,29 @@ from watchlist import add_to_watchlist, in_watchlist, read_watchlist, remove_fro
 def status(message):
     color = sys.stderr.isatty() and "NO_COLOR" not in os.environ
     print(f"\033[36m{message}\033[0m" if color else message, file=sys.stderr, flush=True)
+
+
+@contextlib.contextmanager
+def loading(message):
+    """Barra animada; as buscas por fonte a preenchem conforme terminam."""
+    with Loading(message) as bar:
+        rep.progress = bar.update
+        try:
+            yield
+        finally:
+            rep.progress = None
+
+
+def resolve_players(anime, episode_num, message):
+    """Como rep.search_players, mas com a barra ativa só enquanto cada player é resolvido."""
+    players = rep.search_players(anime, episode_num)
+    while True:
+        with loading(message):
+            try:
+                url = next(players)
+            except StopIteration:
+                return
+        yield url
 
 
 ADD_LABEL = "Adicionar à lista para assistir"
@@ -84,7 +110,8 @@ def choose_audio(requested):
 def main(args):
     rep.sources.clear()
     rep.audio = None
-    loader.load_plugins({"pt-br"}, args.source)
+    with loading("Carregando fontes…"):
+        loader.load_plugins({"pt-br"}, args.source)
     if not rep.sources:
         raise RuntimeError("Nenhuma fonte carregada. Instale requirements.txt e confira os avisos acima.")
     if args.continue_watching:
@@ -106,12 +133,12 @@ def main(args):
         query = (args.query if args.query is not None else input("Pesquise anime: ")).strip()
         if not query:
             raise ValueError("Informe um termo de busca, por exemplo: ani-guarani -q Naruto.")
-        status("Buscando animes nas fontes disponíveis…")
-        rep.search_anime(query)
+        with loading("Buscando animes nas fontes disponíveis…"):
+            rep.search_anime(query)
         rep.audio = choose_audio(getattr(args, "audio", None))
         selected_anime = menu(rep.get_anime_titles(rep.audio), "Escolha o anime:")
-        status("Carregando episódios…")
-        rep.search_episodes(selected_anime)
+        with loading("Carregando episódios…"):
+            rep.search_episodes(selected_anime)
         episodes = rep.get_episode_list(selected_anime)
         if getattr(args, "add_watchlist", False):
             if add_to_watchlist(selected_anime, rep.anime_episodes_urls[selected_anime]):
@@ -124,10 +151,10 @@ def main(args):
         num_episodes = len(episodes)
         history_sources = rep.anime_episodes_urls[selected_anime]
     while True:
-        status(f"Resolvendo player: {selected_anime} — episódio {episode_idx + 1}/{num_episodes}…")
         play_error = None
         played = False
-        for player_url in rep.search_players(selected_anime, episode_idx + 1):
+        message = f"Resolvendo player: {selected_anime} — episódio {episode_idx + 1}/{num_episodes}…"
+        for player_url in resolve_players(selected_anime, episode_idx + 1, message):
             try:
                 play_video(player_url, args.debug)
                 played = True
@@ -184,6 +211,7 @@ def cli(argv=None):
         parser.error("--add-watchlist não pode ser combinado com --continue-watching")
     logging.basicConfig(level=logging.DEBUG if args.debug else logging.WARNING, format="%(levelname)s: %(message)s")
     try:
+        banner()
         main(args)
         return 0
     except (Cancelled, EOFError):

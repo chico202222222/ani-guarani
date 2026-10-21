@@ -36,6 +36,7 @@ class Repository:
         self.anime_episodes_urls = defaultdict(list)
         self._lock = RLock()
         self.query = ""
+        self.progress = None  # callback(feitos, total) chamado a cada fonte concluída
 
     def register(self, plugin: PluginInterface):
         self.sources[plugin.name] = plugin
@@ -43,13 +44,17 @@ class Repository:
     def _run(self, jobs):
         if not jobs:
             return
+        if self.progress:
+            self.progress(0, len(jobs))
         with ThreadPoolExecutor(max_workers=min(4, len(jobs))) as pool:
             pending = {pool.submit(fn, *args): source for source, fn, args in jobs}
-            for future in as_completed(pending):
+            for done, future in enumerate(as_completed(pending), 1):
                 try:
                     future.result()
                 except Exception as exc:
                     log.warning("Fonte %s: %s", pending[future], exc, exc_info=log.isEnabledFor(logging.DEBUG))
+                if self.progress:
+                    self.progress(done, len(jobs))
 
     def search_anime(self, query):
         self.anime_to_urls.clear()
